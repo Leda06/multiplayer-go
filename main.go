@@ -42,6 +42,7 @@ func main() {
 	if err != nil {
 		log.Fatal("ListenAndServe Error: ", err)
 	}
+	log.Println("Server ListenAndServe:", *addr)
 }
 
 func rootHandler(w http.ResponseWriter, r *http.Request) {
