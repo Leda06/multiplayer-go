@@ -1,9 +1,12 @@
-package main
+package biz
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -34,12 +37,38 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+type ClientStatus struct {
+	closed bool
+	mx     sync.RWMutex
+}
+
 type Client struct {
 	hub *Hub
 	// The websocket connection.
 	conn *websocket.Conn
 	// Buffered channel of outbound messages.
 	send chan []byte
+
+	status ClientStatus
+}
+
+func NewClient(hub *Hub, conn *websocket.Conn) *Client {
+	return &Client{
+		hub:    hub,
+		conn:   conn,
+		send:   make(chan []byte),
+		status: ClientStatus{},
+	}
+}
+
+func (c *Client) Close() {
+	c.status.mx.Lock()
+	defer c.status.mx.Unlock()
+	if !c.status.closed {
+		c.status.closed = true
+		c.hub.unregister <- c
+		c.conn.Close()
+	}
 }
 
 // https://stackoverflow.com/questions/37696527/go-gorilla-websockets-on-ping-pong-fail-user-disconnct-call-function
@@ -47,10 +76,9 @@ type Client struct {
 // browser can't send a ping frame to server
 // but we can simulate by send message like {type: 'ping'} to simulate ping frame
 // c.conn.SetPingHandler(func(string) error { log.Println("ping handler"); return nil })
-func (c *Client) readMessage() {
+func (c *Client) ReadMessage() {
 	defer func() {
-		c.hub.unregister <- c
-		c.conn.Close()
+		c.Close()
 	}()
 	c.conn.SetReadLimit(maxMessageSize)
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
@@ -61,6 +89,7 @@ func (c *Client) readMessage() {
 	})
 	for {
 		_, message, err := c.conn.ReadMessage()
+		fmt.Println(string(message))
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("error: %v", err)
@@ -68,19 +97,36 @@ func (c *Client) readMessage() {
 
 			return
 		}
+		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
+		var wsMessage WSMessage[WSMessageData]
+		if err := json.Unmarshal(message, &wsMessage); err != nil {
+			continue
+		}
+		if wsMessage.Type == WSMessageTypePing {
+			fmt.Println("count: ", c.hub.count)
+		}
+
 		// Print the message to the console
 		fmt.Printf("%s sent: %s\n", c.conn.RemoteAddr(), string(message))
 
-		// message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-		c.hub.broadcast <- message
+		if wsMessage.Type == WSMessageTypeGetClientCount {
+			// message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
+			marshalData, _ := json.Marshal(WSMessage[WSMessageData]{
+				Type: WSMessageTypeGetClientCount,
+				Data: WSMessageData{"count": c.hub.count},
+			})
+			c.hub.broadcast <- marshalData
+		} else {
+			c.hub.broadcast <- message
+		}
 	}
 }
 
-func (c *Client) writeMessage() {
+func (c *Client) WriteMessage() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.conn.Close()
+		c.Close()
 	}()
 	for {
 		select {
@@ -94,7 +140,7 @@ func (c *Client) writeMessage() {
 			w, err := c.conn.NextWriter(websocket.TextMessage)
 			if err != nil {
 				log.Println("Error getting writer", err)
-				return
+				continue
 			}
 
 			// w.Write(message)
@@ -108,9 +154,11 @@ func (c *Client) writeMessage() {
 
 			if _, err := w.Write(message); err != nil {
 				log.Println("Error writing message", err)
+				continue
 			}
 			if err := w.Close(); err != nil {
-				return
+				log.Println("w.Close err", err)
+				continue
 			}
 		case <-ticker.C:
 			// log.Println("ticker.C")

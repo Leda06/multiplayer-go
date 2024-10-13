@@ -2,7 +2,7 @@
 
 ### Requirements
 
-- go v1.21.6
+- go v1.23.2
 
 #### Proxy
 
@@ -16,5 +16,11 @@ go env -w GOPROXY=https://goproxy.cn,direct
 ### Running
 
 ```
-go run *.go
+go run cmd/entry/main.go
+```
+
+### Build
+
+```
+docker build -t multiplayer-go .
 ```
