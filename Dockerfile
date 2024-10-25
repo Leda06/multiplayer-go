@@ -16,4 +16,4 @@ FROM alpine:latest AS runner
 WORKDIR /usr/src/app
 COPY --from=builder /usr/src/app .
 EXPOSE 8081
-CMD ["./cmd/entry/main.go"]
+CMD ["./cmd/entry/entry"]
