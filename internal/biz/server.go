@@ -30,10 +30,12 @@ func wsHandler(hub *Hub) http.HandlerFunc {
 		// for k, v := range r.Header {
 		// 	log.Println(k, v)
 		// }
+		log.Println(r.URL)
 		conn, err := upgrader.Upgrade(w, r, w.Header())
 		if err != nil {
-			log.Print(err)
+			log.Printf("Error upgrading connection to WebSocket: %v", err)
 			http.Error(w, "Could not open websocket connection", http.StatusBadRequest)
+			return
 		}
 		client := NewClient(hub, conn)
 		hub.Register(client)
